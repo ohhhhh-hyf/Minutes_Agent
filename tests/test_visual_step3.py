@@ -13,6 +13,8 @@
    - build_visual_ir: Parser -> Planner -> Extractor/Master 并发调度 -> Validator
    - agenerate_visual_minutes: 端到端异步生成 visual.html
 """
+from __future__ import annotations
+
 import pytest
 from tasks.minutes.visual.agents.extractor import VisualExtractor
 from tasks.minutes.visual.agents.master import MasterPlanner, fallback_master
@@ -214,4 +216,46 @@ def test_build_visual_ir_and_pipeline(tmp_path):
         assert "小艺慧记" in html_text
 
     import asyncio
+    asyncio.run(_test())
+
+
+def test_section_summary_agent_arun_llm_signature():
+    """验证 SectionSummaryAgent.arun 传参严格匹配 LLMClient.text 签名（无 json_mode 与 label）"""
+    class StrictLLMClient:
+        def __init__(self):
+            self.called = False
+
+        async def text(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+            timeout: float | None = None,
+        ) -> str:
+            # 如果调用方传入任何未知形参（如 json_mode 或 label），Python 会直接在此抛 TypeError
+            self.called = True
+            return """[
+              {
+                "time_start": "00:00:10",
+                "title": "架构轻量化汇报",
+                "key_words": ["轻量化", "微服务"],
+                "section_summary": "全面启动微服务重构解耦。"
+              }
+            ]"""
+
+    from tasks.minutes.visual.section_summary.agent import SectionSummaryAgent
+    import asyncio
+
+    async def _test():
+        client = StrictLLMClient()
+        agent = SectionSummaryAgent(client=client)
+        transcript = "00:00:10 张三\n架构轻量化汇报开始了。"
+        res = await agent.arun(transcript)
+        assert client.called is True
+        assert len(res.sections) == 1
+        assert res.sections[0].title == "架构轻量化汇报"
+        assert res.sections[0].time_start == "00:00:10"
+        assert len(res.warnings) == 0
+
     asyncio.run(_test())

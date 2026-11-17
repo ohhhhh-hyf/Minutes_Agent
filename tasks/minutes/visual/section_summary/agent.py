@@ -8,7 +8,7 @@ from typing import List, Optional
 from infra.llm import LLMClient
 
 from .client import default_client
-from .config import DEFAULT_TEMPERATURE, LLM_LABEL, USER_PROMPT
+from .config import DEFAULT_TEMPERATURE, USER_PROMPT
 from .errors import SectionSummaryFormatError
 from .fallback import fallback_sections
 from .models import SectionSummary, SectionSummaryResult
@@ -39,8 +39,6 @@ class SectionSummaryAgent:
                 build_prompt(formatted),
                 USER_PROMPT,
                 temperature=DEFAULT_TEMPERATURE,
-                json_mode=False,
-                label=LLM_LABEL,
             )
             sections, norm_warnings = normalize_sections(raw, lines)
             warnings.extend(norm_warnings)
