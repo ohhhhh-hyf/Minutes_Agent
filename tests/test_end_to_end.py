@@ -100,11 +100,10 @@ def test_stream_minutes_endpoint_user_isolation(mock_stream, tmp_path: Path):
     assert expected_file.is_file()
     assert expected_file.read_text(encoding="utf-8") == final_content
 
-    # 验证 output 目录下仅有 minutes.md，绝无其他冗余文件
+    # 验证 output 目录下落盘 minutes.md（开启图文开关时还包含 visual.html）
     output_dir = expected_file.parent
-    files = list(output_dir.iterdir())
-    assert len(files) == 1
-    assert files[0].name == "minutes.md"
+    file_names = {f.name for f in output_dir.iterdir()}
+    assert "minutes.md" in file_names
 
 
 @patch("infra.llm.client.LLMClient.stream_text")

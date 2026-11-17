@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
@@ -19,6 +20,10 @@ from tasks.minutes.classifier.classifier import classify_template
 from tasks.minutes.multi_source import build_aux_rules_for_prompt, build_multi_source_context
 from tasks.minutes.postprocess import clean_markdown_fence, postprocess_minutes_markdown
 from tasks.minutes.prompts import select_minutes_prompt
+from tasks.minutes.visual import VISUAL_MINUTES_ENABLED
+from tasks.minutes.visual.llm import VisualLLM
+from tasks.minutes.visual.pipeline import agenerate_visual_minutes
+from tasks.minutes.visual.section_summary import agenerate_section_summary
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +181,12 @@ async def stream_minutes_agent(
     extra_params = extra or {}
     texts_params = texts or {}
 
+    # 第 0 秒：当 VISUAL_MINUTES_ENABLED 开启时，立即后台并发拉起智能章节任务 (Section Summary)
+    summary_task = None
+    if VISUAL_MINUTES_ENABLED and transcript.strip():
+        logger.info(f"[visual_minutes:start] req_id={req_id} enabled=True, launching section_summary concurrently at second 0")
+        summary_task = asyncio.create_task(agenerate_section_summary(transcript, client=client))
+
     # 1. 议程判定与打标 (docs 图片走 VLM 提取，或从 extra/texts 中直接读取结构化/文本议题)
     agenda_source = (
         extra_params.get("agenda_plan")
@@ -306,19 +317,50 @@ async def stream_minutes_agent(
     except Exception as io_err:
         logger.warning(f"[ARTIFACT:SAVE:ERROR] type=minutes path={target_path} err={io_err}")
 
+    # 8. 图文智能纪要流水线（当图文开关开启且智能章节任务拉起时）
+    visual_file_name = ""
+    if summary_task is not None:
+        sec_summary_md = ""
+        try:
+            summary_res = await summary_task
+            sec_summary_md = summary_res.markdown if summary_res else ""
+            logger.info(f"[section_summary:finish] req_id={req_id} sections={len(summary_res.sections) if summary_res else 0}")
+        except Exception as sec_err:
+            logger.warning(f"[section_summary:error] req_id={req_id} err={sec_err}", exc_info=True)
+
+        visual_html_path = target_path.parent / "visual.html"
+        try:
+            logger.info(f"[visual_minutes:pipeline:start] req_id={req_id} path={visual_html_path}")
+            await agenerate_visual_minutes(
+                minutes_markdown=cleaned_markdown,
+                meeting_transcript=transcript,
+                output_path=str(visual_html_path),
+                llm=VisualLLM(client),
+                section_summary_markdown=sec_summary_md,
+            )
+            if visual_html_path.is_file():
+                visual_file_name = visual_html_path.name
+                logger.info(f"[visual_minutes:finish] req_id={req_id} size={visual_html_path.stat().st_size}B")
+        except Exception as vm_err:
+            logger.warning(f"[visual_minutes:error] req_id={req_id} err={vm_err}", exc_info=True)
+
     cost_time = round(time.perf_counter() - start_time, 2)
     logger.info(f"[MINUTES:DONE] req_id={req_id} dur={cost_time:.2f}s file={target_path}")
+    data_payload: dict[str, Any] = {
+        "content": cleaned_markdown,
+        "text": cleaned_markdown,
+        "file_name": target_path.name,
+    }
+    if visual_file_name:
+        data_payload["visual_file"] = visual_file_name
+
     done_event = {
         "type": "done",
         "code": 0,
         "request_id": req_id,
         "message": "success",
         "monitor": {"cost_time": cost_time},
-        "data": {
-            "content": cleaned_markdown,
-            "text": cleaned_markdown,
-            "file_name": target_path.name,
-        },
+        "data": data_payload,
     }
     yield json.dumps(done_event, ensure_ascii=False) + "\n"
 

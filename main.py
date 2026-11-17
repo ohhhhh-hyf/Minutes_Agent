@@ -356,6 +356,8 @@ async def sync_agent_endpoint(
         },
         "monitor": last_done.get("monitor", {}),
     }
+    if "visual_file" in last_done.get("data", {}):
+        resp_payload["data"]["visual_file"] = last_done["data"]["visual_file"]
     return JSONResponse(content=resp_payload, headers={"X-Request-Id": req_id})
 
 
