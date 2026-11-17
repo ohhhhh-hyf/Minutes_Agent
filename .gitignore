@@ -1,0 +1,32 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+
+# Caches and environments
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+
+# IDE & Editor configs
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment variables & secrets (CRITICAL: Do NOT commit secrets)
+.env
+.env.local
+*.env
+
+# Service runtime logs
+logs/
+*.log
