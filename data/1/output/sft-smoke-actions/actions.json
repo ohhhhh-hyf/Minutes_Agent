@@ -1,0 +1,31 @@
+[
+  {
+    "title": "提交本周周报",
+    "item": "提交本周周报",
+    "owner": "张三",
+    "deadline": "明天下午3点前",
+    "collaborators": [],
+    "acceptance_criteria": null,
+    "dependency": null
+  },
+  {
+    "title": "整理会议纪要",
+    "item": "整理会议纪要",
+    "owner": "李四",
+    "deadline": "后天",
+    "collaborators": [],
+    "acceptance_criteria": null,
+    "dependency": null
+  },
+  {
+    "title": "发送测试报告",
+    "item": "将测试报告发给张三",
+    "owner": "王五",
+    "deadline": "下周一",
+    "collaborators": [
+      "张三"
+    ],
+    "acceptance_criteria": null,
+    "dependency": null
+  }
+]
