@@ -63,7 +63,7 @@ def _apply_hits_to_lines(lines: list[str], valid_hits: list[dict]) -> tuple[list
 def _enrich_via_keywords_fallback(lines: list[str], active_open_items: list[dict]) -> tuple[list[str], list[dict]]:
     """兜底策略：当 Embedding API 超时/限流时，退化为本地分句关键词锚定"""
     valid_hits = []
-    for item in active_open_items[:15]:
+    for item in active_open_items[:30]:
         content = item.get("memory", "")
         owner = item.get("metadata", {}).get("owner", "")
         needles = [w for w in [owner, content[:6]] if w and len(w) >= 2]
@@ -145,7 +145,7 @@ def enrich_markdown_with_history(
 
             if candidate_records:
                 candidate_texts = [r[2].strip() for r in candidate_records]
-                mem_texts = [item.get("memory", "") for item in active_open_items[:15]]
+                mem_texts = [item.get("memory", "") for item in active_open_items[:30]]
                 all_texts = candidate_texts + mem_texts
 
                 # 单次 Batch 调用 BGE-M3 (~100ms)
@@ -157,7 +157,7 @@ def enrich_markdown_with_history(
                 sim_matrix = cosine_similarity_matrix(candidate_vectors, mem_vectors)
 
                 valid_hits = []
-                for mem_i, item in enumerate(active_open_items[:15]):
+                for mem_i, item in enumerate(active_open_items[:30]):
                     col_scores = sim_matrix[:, mem_i]
                     best_cand_idx = int(np.argmax(col_scores))
                     best_score = float(col_scores[best_cand_idx])

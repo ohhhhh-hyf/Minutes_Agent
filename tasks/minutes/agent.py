@@ -331,11 +331,11 @@ async def stream_minutes_agent(
         meeting_time = (extra.get("time") or "").strip() if isinstance(extra, dict) else "未知时间"
         try:
             mem = get_user_memory(uid, data_dir=DEFAULT_DATA_DIR)
-            # 毫秒级捞取历史 open 项 (Mem0 原生 top_k=15 + 切片双重保护)
+            # 毫秒级捞取历史 open 项 (Mem0 原生 top_k=30 + 切片双重保护)
             active_open_items = mem.get_all(
                 filters={"user_id": uid, "series": series_name, "status": "open"},
-                top_k=15,
-            ).get("results", [])[:15]
+                top_k=30,
+            ).get("results", [])[:30]
 
             # 【慢轨分支：后台异步静默沉淀，完全脱离推流主生命周期】
             asyncio.create_task(
