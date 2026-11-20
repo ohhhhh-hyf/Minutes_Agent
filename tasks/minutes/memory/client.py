@@ -13,6 +13,11 @@ from mem0 import Memory
 
 logger = logging.getLogger("MemoryClient")
 
+# 静默 mem0 内部的冗余日志与私密业务内容输出
+logging.getLogger("mem0").setLevel(logging.WARNING)
+logging.getLogger("mem0.memory.main").setLevel(logging.WARNING)
+logging.getLogger("mem0.vector_stores.qdrant").setLevel(logging.WARNING)
+
 _AGENT_DIR = Path(__file__).resolve().parents[3]
 _ROOT_DIR = _AGENT_DIR.parent
 

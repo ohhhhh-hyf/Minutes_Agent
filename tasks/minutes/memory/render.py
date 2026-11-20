@@ -187,7 +187,7 @@ def enrich_markdown_with_history(
         return "\n".join(lines)
 
     # 3. 文末仅追加实际在文中被引用的历史条目，序号与正文出现顺序严格 1:1 递增对齐
-    footer_lines = ["\n\n---\n# 历史记忆关联\n"]
+    footer_lines = ["\n\n# 历史记忆关联\n"]
     for hit in ordered_hits:
         ref_id = hit["ref_id"]
         item = hit["item"]

@@ -2,6 +2,7 @@
 tasks/minutes/memory/reconciler.py
 慢轨后台对账逻辑：旧决议清理 + 结项彻底物理删除 + 查重更新 Upsert + 30条时间戳排序熔断物理清理
 全程使用单批次 Batch 批量向量化，消除循环内的重复网络请求
+聚合统计输出单行脱敏日志，彻底杜绝私密内容与冗余刷屏
 """
 from __future__ import annotations
 
@@ -11,6 +12,11 @@ from .extractor import run_memory_extractor_agent
 from .render import _get_embeddings
 
 logger = logging.getLogger("MemoryReconciler")
+
+# 静默 mem0 内部的冗余日志与私密业务内容输出
+logging.getLogger("mem0").setLevel(logging.WARNING)
+logging.getLogger("mem0.memory.main").setLevel(logging.WARNING)
+logging.getLogger("mem0.vector_stores.qdrant").setLevel(logging.WARNING)
 
 
 def cosine_similarity(v1: list[float], v2: list[float]) -> float:
@@ -44,8 +50,16 @@ async def run_background_memory_update(
     4. 阶段一：close 项与历史 open action 对账结项 (>= 0.75)，直接物理删除已办结待办
     5. 阶段二：新 decision 直接写入；新 action 与现存 open action 查重 (>= 0.80 原地 update 刷新时限，避免重复堆叠)
     6. 阶段三：活跃 open action 总量硬限熔断 (超过 30 条显式按时间戳降序排序，物理删除最老溢出项)
+    7. 最终聚合输出单行脱敏统计日志，严防私密内容外泄
     """
     try:
+        # 统计计数器
+        closed_count = 0
+        refreshed_count = 0
+        new_actions_count = 0
+        new_decisions_count = 0
+        overflow_deleted_count = 0
+
         # 0. 阶段零：前置物理清理属于上一场会议的旧决议 (单场接力棒用完即焚)
         old_decisions = [
             item for item in active_open_items
@@ -53,8 +67,7 @@ async def run_background_memory_update(
         ]
         for d in old_decisions:
             _delete_memory_item(mem, d["id"])
-        if old_decisions:
-            logger.info(f"[Reconciler] 已物理清除上一场历史决议 {len(old_decisions)} 条")
+        del_decisions_count = len(old_decisions)
 
         # 仅保留正在推进中的行动待办 (action)
         active_actions = [
@@ -93,7 +106,6 @@ async def run_background_memory_update(
         closed_ids = set()
 
         # 3. 阶段一：结项闭环流转 (close 项与历史 open action 计算相似度 >= 0.75 直接物理删除)
-        # 全在内存做余弦相似度计算，0 网络 IO
         if close_items and active_actions:
             for c in close_items:
                 c_text = c.get("content", "").strip()
@@ -119,9 +131,9 @@ async def run_background_memory_update(
                         best_id = old_id
 
                 if best_id and highest_score >= 0.75:
-                    logger.info(f"[Reconciler] 事项办结物理删除: {best_id} (相似度 {highest_score:.2f})")
                     _delete_memory_item(mem, best_id)
                     closed_ids.add(best_id)
+                    closed_count += 1
 
         # 现存仍处于 open 的待办清单（剔除刚被办结物理删除的）
         remaining_open_actions = [item for item in active_actions if item["id"] not in closed_ids]
@@ -150,7 +162,6 @@ async def run_background_memory_update(
 
             if cat == "decision":
                 # 定案决议直接立项写入作为本场最新接力棒（无需查重，0 HTTP 调用）
-                logger.info(f"[Reconciler] 最新定案决议立项写入: {content[:25]}...")
                 if hasattr(mem, "_create_memory") and content in vector_map:
                     mem._create_memory(
                         data=content,
@@ -164,6 +175,7 @@ async def run_background_memory_update(
                         infer=False,
                         metadata=new_meta
                     )
+                new_decisions_count += 1
             else:
                 # 行动待办与存量待办做内存语义查重
                 matched_existing_id = None
@@ -181,7 +193,6 @@ async def run_background_memory_update(
 
                 if matched_existing_id and max_sim >= 0.80:
                     # 命中已有任务：老任务延续推进 / 刷新截止时间 -> 【原地 UPDATE，复用 vector_map，0 网络调用】
-                    logger.info(f"[Reconciler] 老待办延续刷新 (相似度 {max_sim:.2f}): {matched_existing_id}")
                     if hasattr(mem, "_update_memory"):
                         mem._update_memory(
                             memory_id=matched_existing_id,
@@ -195,9 +206,9 @@ async def run_background_memory_update(
                             text=content,
                             metadata=new_meta
                         )
+                    refreshed_count += 1
                 else:
                     # 全新待办 -> 真正执行立项写入（复用 vector_map 向量直接入库，0 网络调用）
-                    logger.info(f"[Reconciler] 全新待办立项写入: {content[:25]}...")
                     if hasattr(mem, "_create_memory") and content in vector_map:
                         mem._create_memory(
                             data=content,
@@ -211,6 +222,7 @@ async def run_background_memory_update(
                             infer=False,
                             metadata=new_meta
                         )
+                    new_actions_count += 1
 
         # 5. 阶段三：容量熔断守卫 (Zombie Hard Cap = 30 条，显式按时间戳降序排序)
         current_active = mem.get_all(
@@ -224,19 +236,26 @@ async def run_background_memory_update(
             if item.get("metadata", {}).get("category") != "decision"
         ]
 
-        # 1. 显式按“最后更新时间”从新到老降序排列（最新活跃的排在最前面）
+        # 显式按“最后更新时间”从新到老降序排列（最新活跃的排在最前面）
         active_actions_in_db.sort(
             key=lambda x: x.get("updated_at") or x.get("created_at") or x.get("metadata", {}).get("meeting_time", ""),
             reverse=True
         )
 
-        # 2. 前 30 条是【最新提出来的】或者【最近被讨论刷新的】，受到严格保护！
-        # 3. 超过 30 条的尾部数据（active_actions_in_db[30:]），才是真正长期无人问津的“最老僵尸项”
+        # 超过 30 条的尾部数据（active_actions_in_db[30:]），才是真正长期无人问津的“最老僵尸项”
         if len(active_actions_in_db) > 30:
             overflow_stale_items = active_actions_in_db[30:]
             for stale_item in overflow_stale_items:
                 _delete_memory_item(mem, stale_item["id"])
-            logger.info(f"[Reconciler] 触发容量上限熔断，已物理删除 {len(overflow_stale_items)} 条最陈旧待办")
+            overflow_deleted_count = len(overflow_stale_items)
+
+        # 6. 单行脱敏统计日志（不含任何具体人名、业务交付物或私密文本，严防隐私泄露）
+        logger.info(
+            f"[MemoryReconciler] 慢轨对账统计: "
+            f"清理旧决议={del_decisions_count}, 办结删除={closed_count}, "
+            f"延续刷新={refreshed_count}, 新增待办={new_actions_count}, "
+            f"新增决议={new_decisions_count}, 熔断淘汰={overflow_deleted_count}"
+        )
 
     except Exception as e:
         logger.error(f"[background_memory_update] 后台更新失败: {e}", exc_info=True)
