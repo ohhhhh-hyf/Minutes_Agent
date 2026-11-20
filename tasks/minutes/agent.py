@@ -24,6 +24,11 @@ from tasks.minutes.visual import VISUAL_MINUTES_ENABLED
 from tasks.minutes.visual.llm import VisualLLM
 from tasks.minutes.visual.pipeline import agenerate_visual_minutes
 from tasks.minutes.visual.section_summary import agenerate_section_summary
+from tasks.minutes.memory import (
+    get_user_memory,
+    enrich_markdown_with_history,
+    run_background_memory_update,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +309,39 @@ async def stream_minutes_agent(
     # 7. 全量内容后处理清洗与用户隔离落盘
     raw_markdown = "".join(full_chunks)
     cleaned_markdown = postprocess_minutes_markdown(raw_markdown, lang=lang)
+
+    # 7.5 跨场次长期记忆双轨流转 (若 extra 中携带 series 标识)
+    series_name = (extra.get("series") or "").strip() if isinstance(extra, dict) else ""
+    if series_name:
+        meeting_time = (extra.get("time") or "").strip() if isinstance(extra, dict) else "未知时间"
+        try:
+            mem = get_user_memory(uid, data_dir=DEFAULT_DATA_DIR)
+            # 毫秒级捞取历史 open 项 (Mem0 原生 top_k=15 + 切片双重保护)
+            active_open_items = mem.get_all(
+                filters={"user_id": uid, "series": series_name, "status": "open"},
+                top_k=15,
+            ).get("results", [])[:15]
+
+            # 【慢轨分支：后台异步静默沉淀，完全脱离推流主生命周期】
+            asyncio.create_task(
+                run_background_memory_update(
+                    minutes_md=cleaned_markdown,
+                    active_open_items=active_open_items,
+                    series=series_name,
+                    user_id=uid,
+                    meeting_time=meeting_time,
+                    mem=mem,
+                )
+            )
+
+            # 【快轨分支：用户侧分句级语义打标与文末历史记忆关联拼装 (~100ms)】
+            cleaned_markdown = enrich_markdown_with_history(
+                minutes_md=cleaned_markdown,
+                active_open_items=active_open_items,
+                embedder=mem.embedding_model,
+            )
+        except Exception as mem_err:
+            logger.warning(f"[MEMORY:ERROR] req_id={req_id} err={mem_err}", exc_info=True)
 
     if output_path:
         target_path = Path(output_path)

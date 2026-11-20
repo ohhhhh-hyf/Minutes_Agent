@@ -171,6 +171,9 @@ class Extra(BaseModel):
     agenda_plan: Optional[AgendaPlan] = Field(
         default=None, description="结构化议程大盘强类型契约 (支持 AgendaPlan 结构字典或 JSON 字符串)"
     )
+    series: Optional[str] = Field(
+        default=None, description="会议系列标识（如 '技术架构周会'，用于触发跨场次长期记忆追踪）"
+    )
 
     @field_validator("agenda_plan", mode="before")
     @classmethod
@@ -199,6 +202,9 @@ class TaskRequest(BaseModel):
     """统一严格请求体契约（严格对齐根项目，彻底移除 domain，严格固定 texts 与 extra）."""
 
     task: str = Field(default="minutes", description="任务类型: minutes (纪要) 或 actions (待办)")
+    series: Optional[str] = Field(
+        default=None, description="会议系列标识（如 '技术架构周会'，用于触发跨场次长期记忆追踪）"
+    )
     texts: dict[str, str] = Field(
         default_factory=dict,
         description="文本内容容器，固定包含: transcript, keypoints, notes, vision_info, actions_text",
@@ -267,9 +273,11 @@ async def stream_agent_endpoint(
     user_id, req_id = _resolve_ids(x_user_id, x_request_id)
     response.headers["X-Request-Id"] = req_id
 
+    series_val = (body.series or body.extra.series or "").strip() or None
     extra_dict = {
         "template": body.extra.template,
         "time": body.extra.time,
+        "series": series_val,
         "agenda_plan": body.extra.agenda_plan.model_dump() if body.extra.agenda_plan else None,
     }
 
@@ -328,9 +336,11 @@ async def sync_agent_endpoint(
     if not transcript_val and not body.docs:
         raise HTTPException(status_code=400, detail="texts.transcript 与 docs 不能同时为空")
 
+    series_val = (body.series or body.extra.series or "").strip() or None
     extra_dict = {
         "template": body.extra.template,
         "time": body.extra.time,
+        "series": series_val,
         "agenda_plan": body.extra.agenda_plan.model_dump() if body.extra.agenda_plan else None,
     }
 
