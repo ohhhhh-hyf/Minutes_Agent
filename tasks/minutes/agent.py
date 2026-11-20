@@ -310,7 +310,22 @@ async def stream_minutes_agent(
     raw_markdown = "".join(full_chunks)
     cleaned_markdown = postprocess_minutes_markdown(raw_markdown, lang=lang)
 
-    # 7.5 跨场次长期记忆双轨流转 (若 extra 中携带 series 标识)
+    # 7.1 先保存原始未挂接记忆的基础纪要 minutes.md
+    if output_path:
+        target_path = Path(output_path)
+    else:
+        target_path = DEFAULT_DATA_DIR / uid / "output" / req_id / "minutes.md"
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(cleaned_markdown, encoding="utf-8")
+        logger.info(f"[ARTIFACT:SAVE] type=minutes path={target_path}")
+    except Exception as io_err:
+        logger.warning(f"[ARTIFACT:SAVE:ERROR] type=minutes path={target_path} err={io_err}")
+
+    # 7.2 跨场次长期记忆双轨流转 (若 extra 中携带 series 标识)
+    final_markdown = cleaned_markdown
+    memory_target_path: Path | None = None
     series_name = (extra.get("series") or "").strip() if isinstance(extra, dict) else ""
     if series_name:
         meeting_time = (extra.get("time") or "").strip() if isinstance(extra, dict) else "未知时间"
@@ -335,25 +350,18 @@ async def stream_minutes_agent(
             )
 
             # 【快轨分支：用户侧分句级语义打标与文末历史记忆关联拼装 (~100ms)】
-            cleaned_markdown = enrich_markdown_with_history(
+            final_markdown = enrich_markdown_with_history(
                 minutes_md=cleaned_markdown,
                 active_open_items=active_open_items,
                 embedder=mem.embedding_model,
             )
+
+            # 7.3 再保存包含历史溯源打标与关联卡片的 minutes_memory.md
+            memory_target_path = target_path.parent / "minutes_memory.md"
+            memory_target_path.write_text(final_markdown, encoding="utf-8")
+            logger.info(f"[ARTIFACT:SAVE] type=minutes_memory path={memory_target_path}")
         except Exception as mem_err:
             logger.warning(f"[MEMORY:ERROR] req_id={req_id} err={mem_err}", exc_info=True)
-
-    if output_path:
-        target_path = Path(output_path)
-    else:
-        target_path = DEFAULT_DATA_DIR / uid / "output" / req_id / "minutes.md"
-
-    try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(cleaned_markdown, encoding="utf-8")
-        logger.info(f"[ARTIFACT:SAVE] type=minutes path={target_path}")
-    except Exception as io_err:
-        logger.warning(f"[ARTIFACT:SAVE:ERROR] type=minutes path={target_path} err={io_err}")
 
     # 8. 图文智能纪要流水线（当图文开关开启且智能章节任务拉起时）
     visual_file_name = ""
@@ -370,7 +378,7 @@ async def stream_minutes_agent(
         try:
             logger.info(f"[visual_minutes:pipeline:start] req_id={req_id} path={visual_html_path}")
             await agenerate_visual_minutes(
-                minutes_markdown=cleaned_markdown,
+                minutes_markdown=final_markdown,
                 meeting_transcript=transcript,
                 output_path=str(visual_html_path),
                 llm=VisualLLM(client),
@@ -385,10 +393,13 @@ async def stream_minutes_agent(
     cost_time = round(time.perf_counter() - start_time, 2)
     logger.info(f"[MINUTES:DONE] req_id={req_id} dur={cost_time:.2f}s file={target_path}")
     data_payload: dict[str, Any] = {
-        "content": cleaned_markdown,
-        "text": cleaned_markdown,
-        "file_name": target_path.name,
+        "content": final_markdown,
+        "text": final_markdown,
+        "file_name": memory_target_path.name if (series_name and memory_target_path and memory_target_path.is_file()) else target_path.name,
+        "minutes_file": str(target_path),
     }
+    if memory_target_path and memory_target_path.is_file():
+        data_payload["memory_file"] = str(memory_target_path)
     if visual_file_name:
         data_payload["visual_file"] = visual_file_name
 
@@ -438,4 +449,8 @@ async def generate_minutes(
         elif event.get("type") == "done":
             last_done = event
 
-    return postprocess_minutes_markdown("".join(content_chunks), lang=lang), last_done
+    final_content = (
+        last_done.get("data", {}).get("content")
+        or postprocess_minutes_markdown("".join(content_chunks), lang=lang)
+    )
+    return final_content, last_done
