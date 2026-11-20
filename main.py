@@ -15,7 +15,7 @@ from typing import Any, Optional, Union
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from infra.telemetry import setup_logging, unify_uvicorn_loggers
 from infra.telemetry.middleware import LoggingMiddleware
@@ -50,6 +50,8 @@ TEXT_KEYS = ("transcript", "keypoints", "notes", "vision_info", "actions_text")
 
 class AgendaItem(BaseModel):
     """单项既定议程强类型契约 (严格对齐 2+4 核心字段，仅 title 必填)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     title: str = Field(..., min_length=1, description="议题全称（【唯一核心必填】，语义对齐与打标依据）")
     seq: str = Field(default="", description="议程序号（选填，如 '01'，缺省自动编排）")
@@ -96,6 +98,8 @@ class AgendaItem(BaseModel):
 class AgendaMeta(BaseModel):
     """议程顶层元数据强类型契约."""
 
+    model_config = ConfigDict(extra="forbid")
+
     theme: str = Field(default="", description="会议总主题或议程标题（选填）")
     attendees: str = Field(default="", description="主持人/召集人/全场与会人员名单（选填）")
 
@@ -110,7 +114,9 @@ class AgendaMeta(BaseModel):
 
 
 class AgendaPlan(BaseModel):
-    """全会议程大盘强类型契约 (严格对齐根项目 2+4 规范，兼容标准 items 与 VLM 扁平 agenda_items)."""
+    """全会议程大盘强类型契约 (严格只认 items 核心字段，禁止任何废弃别名)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     meta: AgendaMeta = Field(default_factory=AgendaMeta)
     items: list[AgendaItem] = Field(default_factory=list)
@@ -134,25 +140,9 @@ class AgendaPlan(BaseModel):
         if not isinstance(data, dict):
             raise ValueError("agenda_plan 必须是字典或合法 JSON 字符串")
 
-        # 兼容 VLM 团队直传扁平格式: {"theme": ..., "attendees": [...], "agenda_items": [...]}
-        if "items" not in data and "agenda_items" in data:
-            raw_items = data.get("agenda_items") or []
-            meta_theme = data.get("theme") or ""
-            meta_att = data.get("attendees") or ""
-            items_list = []
-            for idx, it in enumerate(raw_items, 1):
-                if isinstance(it, dict):
-                    it_copy = dict(it)
-                    if not it_copy.get("seq"):
-                        it_copy["seq"] = f"{idx:02d}"
-                    items_list.append(it_copy)
-            return {
-                "meta": {
-                    "theme": meta_theme,
-                    "attendees": meta_att,
-                },
-                "items": items_list,
-            }
+        # 严格禁止使用废弃的 agenda_items 别名
+        if "agenda_items" in data:
+            raise ValueError("agenda_plan 仅支持 'items' 字段，禁止使用已废弃的 'agenda_items' 别名")
 
         # 标准格式: 若 items 中的项缺少 seq，自动按 01, 02 补齐
         if "items" in data and isinstance(data["items"], list):
@@ -164,15 +154,14 @@ class AgendaPlan(BaseModel):
 
 
 class Extra(BaseModel):
-    """任务差异参数（严格对齐根项目）."""
+    """任务差异参数（严格对齐根项目，禁止任何未定义字段如 series、agenda）."""
+
+    model_config = ConfigDict(extra="forbid")
 
     template: str = Field(default="", description="模板 ID（如 general_minutes，留空自动智能分类）")
     time: str = Field(default="", description="会议起始时间（如 2026/11/13 14:00，待办用于 Calendar 推导）")
     agenda_plan: Optional[AgendaPlan] = Field(
         default=None, description="结构化议程大盘强类型契约 (支持 AgendaPlan 结构字典或 JSON 字符串)"
-    )
-    series: Optional[str] = Field(
-        default=None, description="会议系列标识（如 '技术架构周会'，用于触发跨场次长期记忆追踪）"
     )
 
     @field_validator("agenda_plan", mode="before")
@@ -273,11 +262,10 @@ async def stream_agent_endpoint(
     user_id, req_id = _resolve_ids(x_user_id, x_request_id)
     response.headers["X-Request-Id"] = req_id
 
-    series_val = (body.series or body.extra.series or "").strip() or None
+    series_val = (body.series or "").strip() or None
     extra_dict = {
         "template": body.extra.template,
         "time": body.extra.time,
-        "series": series_val,
         "agenda_plan": body.extra.agenda_plan.model_dump() if body.extra.agenda_plan else None,
     }
 
@@ -285,6 +273,7 @@ async def stream_agent_endpoint(
         async for line in stream_minutes_agent(
             transcript=transcript_val,
             template_id=body.extra.template,
+            series=series_val or "",
             docs=body.docs,
             texts=body.texts,
             extra=extra_dict,
@@ -336,17 +325,17 @@ async def sync_agent_endpoint(
     if not transcript_val and not body.docs:
         raise HTTPException(status_code=400, detail="texts.transcript 与 docs 不能同时为空")
 
-    series_val = (body.series or body.extra.series or "").strip() or None
+    series_val = (body.series or "").strip() or None
     extra_dict = {
         "template": body.extra.template,
         "time": body.extra.time,
-        "series": series_val,
         "agenda_plan": body.extra.agenda_plan.model_dump() if body.extra.agenda_plan else None,
     }
 
     markdown_text, last_done = await generate_minutes(
         transcript=transcript_val,
         template_id=body.extra.template,
+        series=series_val or "",
         docs=body.docs,
         texts=body.texts,
         extra=extra_dict,

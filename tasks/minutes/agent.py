@@ -156,6 +156,7 @@ async def stream_minutes_agent(
     *,
     transcript: str,
     template_id: str = "",
+    series: str = "",
     docs: list[str] | None = None,
     texts: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
@@ -192,13 +193,8 @@ async def stream_minutes_agent(
         logger.info(f"[visual_minutes:start] req_id={req_id} enabled=True, launching section_summary concurrently at second 0")
         summary_task = asyncio.create_task(agenerate_section_summary(transcript, client=client))
 
-    # 1. 议程判定与打标 (docs 图片走 VLM 提取，或从 extra/texts 中直接读取结构化/文本议题)
-    agenda_source = (
-        extra_params.get("agenda_plan")
-        or extra_params.get("agenda")
-        or texts_params.get("agenda")
-        or ""
-    )
+    # 1. 议程判定与打标 (docs 图片走 VLM 提取，或严格从 extra.agenda_plan 中读取结构化议程)
+    agenda_source = extra_params.get("agenda_plan") or ""
     if not agenda_source and docs:
         logger.info(f"[AGENDA:INPUT] received docs_count={len(docs)} user_id={uid} docs={docs}")
         for doc_item in docs:
@@ -323,10 +319,10 @@ async def stream_minutes_agent(
     except Exception as io_err:
         logger.warning(f"[ARTIFACT:SAVE:ERROR] type=minutes path={target_path} err={io_err}")
 
-    # 7.2 跨场次长期记忆双轨流转 (若 extra 中携带 series 标识)
+    # 7.2 跨场次长期记忆双轨流转 (若顶层显式传入 series 系列标识)
     final_markdown = cleaned_markdown
     memory_target_path: Path | None = None
-    series_name = (extra.get("series") or "").strip() if isinstance(extra, dict) else ""
+    series_name = (series or "").strip()
     if series_name:
         meeting_time = (extra.get("time") or "").strip() if isinstance(extra, dict) else "未知时间"
         try:
@@ -418,6 +414,7 @@ async def generate_minutes(
     *,
     transcript: str,
     template_id: str = "",
+    series: str = "",
     docs: list[str] | None = None,
     texts: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
@@ -434,6 +431,7 @@ async def generate_minutes(
     async for line in stream_minutes_agent(
         transcript=transcript,
         template_id=template_id,
+        series=series,
         docs=docs,
         texts=texts,
         extra=extra,

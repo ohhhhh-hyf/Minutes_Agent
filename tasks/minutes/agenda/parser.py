@@ -496,9 +496,13 @@ def ensure_agenda_plan(data: dict[str, Any] | list[Any] | AgendaPlan | str, tran
         items = []
         for it in data:
             if isinstance(it, dict):
-                title = str(it.get("title") or it.get("topic") or "").strip()
+                # 严格禁止废弃别名 topic, speaker, presenter
+                deprecated_item_keys = {"topic", "speaker", "presenter"}.intersection(it.keys())
+                if deprecated_item_keys:
+                    raise ValueError(f"AgendaItem 仅支持 title, presenters，禁止使用废弃别名: {sorted(deprecated_item_keys)}")
+                title = str(it.get("title") or "").strip()
                 if title:
-                    raw_pres = it.get("presenters") or it.get("speaker") or it.get("presenter") or []
+                    raw_pres = it.get("presenters") or []
                     if isinstance(raw_pres, str):
                         presenters = clean_presenter_names(raw_pres)
                     elif isinstance(raw_pres, list):
@@ -521,17 +525,25 @@ def ensure_agenda_plan(data: dict[str, Any] | list[Any] | AgendaPlan | str, tran
             plan = reconcile_presenter_names(plan, transcript=transcript)
         return plan
     if isinstance(data, dict):
+        # 严格禁止废弃别名 agenda_items, agenda_plan
+        deprecated_keys = {"agenda_items", "agenda_plan"}.intersection(data.keys())
+        if deprecated_keys:
+            raise ValueError(f"agenda_plan 仅支持 items，禁止使用废弃别名: {sorted(deprecated_keys)}")
         meta_dict = data.get("meta") if isinstance(data.get("meta"), dict) else {}
         theme = str(meta_dict.get("theme") or data.get("theme") or "").strip()
         raw_att = meta_dict.get("attendees") or data.get("attendees") or []
         attendees = "、".join(raw_att) if isinstance(raw_att, list) else str(raw_att).strip()
         items = []
-        raw_items = data.get("items") or data.get("agenda_items") or data.get("agenda_plan") or []
+        raw_items = data.get("items") or []
         for it in raw_items:
             if isinstance(it, dict):
-                title = str(it.get("title") or it.get("topic") or "").strip()
+                # 严格禁止废弃别名 topic, speaker, presenter
+                deprecated_item_keys = {"topic", "speaker", "presenter"}.intersection(it.keys())
+                if deprecated_item_keys:
+                    raise ValueError(f"AgendaItem 仅支持 title, presenters，禁止使用废弃别名: {sorted(deprecated_item_keys)}")
+                title = str(it.get("title") or "").strip()
                 if title:
-                    raw_pres = it.get("presenters") or it.get("speaker") or it.get("presenter") or []
+                    raw_pres = it.get("presenters") or []
                     if isinstance(raw_pres, str):
                         presenters = clean_presenter_names(raw_pres)
                     elif isinstance(raw_pres, list):

@@ -139,7 +139,7 @@ def test_build_actions_user_message_and_prompt():
         "actions_text": "张三提到下周五前完成方案",
         "keypoints": "核心重点保障系统不崩",
         "notes": "划线：李四承诺明天给反馈",
-        "vision": "架构拓扑图显示支持5000TPS",
+        "vision_info": "架构拓扑图显示支持5000TPS",
     }
     msg = build_actions_user_message("会议讨论...", texts=texts)
     assert "【会议原文】" in msg
@@ -153,6 +153,24 @@ def test_build_actions_user_message_and_prompt():
     assert "用户关键点参考" in prompt
     assert "用户划线原话与笔记参考" in prompt
     assert "视觉信息参考(OCR)" in prompt
+
+    # 严格校验：传入废弃别名 candidate_actions / core_points / user_notes / ocr / vision 必须报错
+    import pytest
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_actions_user_message("会议讨论...", texts={"candidate_actions": "待办"})
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_actions_user_message("会议讨论...", texts={"core_points": "关键点"})
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_actions_user_message("会议讨论...", texts={"user_notes": "笔记"})
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_actions_user_message("会议讨论...", texts={"ocr": "图片"})
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_actions_user_message("会议讨论...", texts={"vision": "图片"})
 
 
 def test_extract_actions_agent_mock_dual_states(tmp_path: Path):

@@ -72,7 +72,7 @@ def test_ensure_agenda_plan_from_vlm_dict():
     vlm_dict = {
         "theme": "2026架构研讨会",
         "attendees": ["张三", "李四"],
-        "agenda_items": [
+        "items": [
             {"seq": "01", "title": "微服务治理演进", "presenters": ["赵工"]},
             {"seq": "02", "title": "茶歇合影留念", "presenters": []},
         ],
@@ -81,6 +81,23 @@ def test_ensure_agenda_plan_from_vlm_dict():
     assert plan.meta.theme == "2026架构研讨会"
     assert len(plan.items) == 2
     assert plan.items[0].title == "微服务治理演进"
+
+
+def test_ensure_agenda_plan_deprecated_keys_raise():
+    """严格校验：传入废弃别名 agenda_items 或 presenter/topic/speaker 必须报错."""
+    import pytest
+
+    with pytest.raises(ValueError, match="仅支持 items"):
+        ensure_agenda_plan({"agenda_items": [{"title": "议题"}]})
+
+    with pytest.raises(ValueError, match="仅支持 title, presenters"):
+        ensure_agenda_plan({"items": [{"title": "议题", "speaker": "张三"}]})
+
+    with pytest.raises(ValueError, match="仅支持 title, presenters"):
+        ensure_agenda_plan({"items": [{"title": "议题", "presenter": "张三"}]})
+
+    with pytest.raises(ValueError, match="仅支持 title, presenters"):
+        ensure_agenda_plan({"items": [{"topic": "议题", "presenters": []}]})
 
 
 def test_agenda_alignment_and_ceremonial_filtering():
@@ -151,12 +168,12 @@ def test_track_b_anonymous_content_alignment_speaker_log():
     """
     agenda_dict = {
         "theme": "何刚总北研所交流会",
-        "agenda_items": [
-            {"seq": "01", "title": "活动开场视频播放", "presenter": ""},
-            {"seq": "02", "title": "何刚总致辞", "presenter": ""},
-            {"seq": "03", "title": "互动交流", "presenter": ""},
-            {"seq": "04", "title": "任务令签署与授予", "presenter": ""},
-            {"seq": "05", "title": "全体合影", "presenter": ""},
+        "items": [
+            {"seq": "01", "title": "活动开场视频播放", "presenters": []},
+            {"seq": "02", "title": "何刚总致辞", "presenters": []},
+            {"seq": "03", "title": "互动交流", "presenters": []},
+            {"seq": "04", "title": "任务令签署与授予", "presenters": []},
+            {"seq": "05", "title": "全体合影", "presenters": []},
         ],
     }
 
@@ -255,7 +272,7 @@ def test_opening_announcement_guard_single_block():
     """测试开场单发言块集中宣读多项议程（报菜名）时，不提前冲刷跳过第一项实质议题."""
     agenda_dict = {
         "theme": "架构研讨与治理演进",
-        "agenda_items": [
+        "items": [
             {"seq": "01", "title": "交易链路架构演进", "presenters": []},
             {"seq": "02", "title": "跨机房容灾部署规划", "presenters": []},
             {"seq": "03", "title": "运营成本精细化管控", "presenters": []},

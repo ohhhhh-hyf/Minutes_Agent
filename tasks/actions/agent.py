@@ -47,13 +47,17 @@ def build_actions_user_message(transcript: str, texts: dict[str, Any] | None = N
     """装配待办提取的 User Message。"""
     parts: list[str] = [f"【会议原文】\n{transcript.strip()}"]
     if texts and isinstance(texts, dict):
-        if act_text := _format_aux_item(texts.get("actions_text") or texts.get("candidate_actions")):
+        allowed_keys = {"transcript", "actions_text", "keypoints", "notes", "vision_info"}
+        unknown = set(texts.keys()) - allowed_keys
+        if unknown:
+            raise ValueError(f"texts 仅支持 {sorted(allowed_keys)}，禁止使用废弃别名: {sorted(unknown)}")
+        if act_text := _format_aux_item(texts.get("actions_text")):
             parts.append(f"【用户标记待办原文】\n{act_text}")
-        if kp := _format_aux_item(texts.get("keypoints") or texts.get("core_points")):
+        if kp := _format_aux_item(texts.get("keypoints")):
             parts.append(f"【用户核心关键点】\n{kp}")
-        if notes := _format_aux_item(texts.get("notes") or texts.get("user_notes")):
+        if notes := _format_aux_item(texts.get("notes")):
             parts.append(f"【用户划线原话与笔记】\n{notes}")
-        if vision := _format_aux_item(texts.get("vision") or texts.get("vision_info") or texts.get("ocr")):
+        if vision := _format_aux_item(texts.get("vision_info")):
             parts.append(f"【视觉信息参考(OCR)】\n{vision}")
     return "\n\n".join(parts)
 

@@ -69,7 +69,6 @@ def main():
         "extra": {
             "template": "general_minutes",  # 指定通用模板（留空则自动智能分类）
             "time": MEETING_TIME,           # 会议时间
-            "series": SERIES,               # extra 中冗余一份确保多协议完全兼容
         },
         "lang": "zh",
     }

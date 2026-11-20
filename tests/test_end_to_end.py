@@ -462,15 +462,17 @@ def test_agenda_plan_schema_strict_validation():
     resp5 = client.post("/api/agent/v1/stream", json=req_json_str)
     assert resp5.status_code == 200
 
-    # 6. VLM 团队直传扁平格式归一并通过
+    # 6. 标准 items 格式通过
     req_vlm = {
         "task": "minutes",
         "texts": {"transcript": "发言者1：开会。"},
         "extra": {
             "agenda_plan": {
-                "theme": "技术评审",
-                "attendees": ["张三", "李四"],
-                "agenda_items": [
+                "meta": {
+                    "theme": "技术评审",
+                    "attendees": "张三；李四",
+                },
+                "items": [
                     {"title": "视觉多模态接口上线", "presenters": ["王工"]}
                 ]
             }
@@ -478,3 +480,42 @@ def test_agenda_plan_schema_strict_validation():
     }
     resp6 = client.post("/api/agent/v1/stream", json=req_vlm)
     assert resp6.status_code == 200
+
+    # 7. 严格负向校验：extra 中包含 series 必须报 422 (Unprocessable Entity)
+    req_bad_series = {
+        "task": "minutes",
+        "texts": {"transcript": "开会"},
+        "extra": {"series": "测试系列"}
+    }
+    resp_bad_series = client.post("/api/agent/v1/stream", json=req_bad_series)
+    assert resp_bad_series.status_code == 422
+
+    # 8. 严格负向校验：extra 中包含 agenda 必须报 422
+    req_bad_agenda = {
+        "task": "minutes",
+        "texts": {"transcript": "开会"},
+        "extra": {"agenda": "议程文本"}
+    }
+    resp_bad_agenda = client.post("/api/agent/v1/stream", json=req_bad_agenda)
+    assert resp_bad_agenda.status_code == 422
+
+    # 9. 严格负向校验：agenda_plan 中包含已废弃的 agenda_items 必须报 422
+    req_bad_agenda_items = {
+        "task": "minutes",
+        "texts": {"transcript": "开会"},
+        "extra": {
+            "agenda_plan": {
+                "agenda_items": [{"title": "议题"}]
+            }
+        }
+    }
+    resp_bad_items = client.post("/api/agent/v1/stream", json=req_bad_agenda_items)
+    assert resp_bad_items.status_code == 422
+
+    # 10. 严格负向校验：texts 中包含废弃别名 core_points 必须报 422
+    req_bad_texts = {
+        "task": "minutes",
+        "texts": {"transcript": "开会", "core_points": "点"}
+    }
+    resp_bad_texts = client.post("/api/agent/v1/stream", json=req_bad_texts)
+    assert resp_bad_texts.status_code == 422

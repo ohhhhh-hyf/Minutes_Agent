@@ -67,14 +67,14 @@ def test_prompts_selection():
 
 
 def test_multi_source_assembly():
-    """测试多源辅助材料（keypoints, notes, vision）的装配与规约拼接。"""
+    """测试多源辅助材料（keypoints, notes, vision_info）的装配与规约拼接。"""
     texts = {
         "keypoints": ["重点关注 TPS 突破 5000", "Q4 营销预算控制在 200 万内"],
         "notes": [
             {"quote": "我们底线是保证核心交易不丢单", "note": "重点记下这句"},
             {"quote": "下周五前出方案"},
         ],
-        "vision": "架构拓扑图显示双机房主备切换",
+        "vision_info": "架构拓扑图显示双机房主备切换",
     }
     aux_context, labels = build_multi_source_context(texts)
     assert set(labels) == {"keypoints", "notes", "vision"}
@@ -87,6 +87,22 @@ def test_multi_source_assembly():
     assert "用户核心关键点参考规约" in rules
     assert "用户划线原话与笔记参考规约" in rules
     assert "视觉信息参考规约" in rules
+
+    # 严格校验：传入废弃别名 vision / core_points / user_notes / ocr 必须报错
+    import pytest
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_multi_source_context({"vision": "拓扑图"})
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_multi_source_context({"core_points": ["关键点"]})
+
+    with pytest.raises(ValueError, match="仅支持"):
+        build_multi_source_context({"user_notes": ["笔记"]})
+
+    # 严格校验：notes 字典中包含废弃别名 text 或 comment 必须报错
+    with pytest.raises(ValueError, match="notes 字典仅支持 'quote' 与 'note'"):
+        build_multi_source_context({"notes": [{"text": "原话", "comment": "笔记"}]})
 
     # 测试空材料
     empty_ctx, empty_labels = build_multi_source_context({})
@@ -243,10 +259,12 @@ def test_stream_minutes_agent_mock_agenda_topic_major(tmp_path: Path):
         out_file = tmp_path / "agenda_minutes.md"
 
         extra_data = {
-            "agenda_plan": [
-                {"title": "支付系统重构", "speaker": "张三"},
-                {"title": "市场增长规划", "speaker": "李四"},
-            ]
+            "agenda_plan": {
+                "items": [
+                    {"title": "支付系统重构", "presenters": ["张三"]},
+                    {"title": "市场增长规划", "presenters": ["李四"]},
+                ]
+            }
         }
 
         # 真实讨论需大于 40 字以通过实质性研讨判定

@@ -27,9 +27,12 @@ def _format_item_list(data: Any) -> str:
                 if s:
                     formatted.append(f"- {s}" if not s.startswith(("-", "*", "•")) else s)
             elif isinstance(item, dict):
-                # 支持 {"quote": "...", "note": "..."} 结构
-                quote = str(item.get("quote") or item.get("text") or "").strip()
-                note = str(item.get("note") or item.get("comment") or "").strip()
+                # 严格只认 quote 与 note 属性，禁止任何废弃别名如 text, comment
+                invalid = set(item.keys()) - {"quote", "note"}
+                if invalid:
+                    raise ValueError(f"notes 字典仅支持 'quote' 与 'note'，禁止使用废弃别名: {sorted(invalid)}")
+                quote = str(item.get("quote") or "").strip()
+                note = str(item.get("note") or "").strip()
                 if quote and note:
                     formatted.append(f"- 原话：\"{quote}\" （笔记：{note}）")
                 elif quote:
@@ -41,7 +44,7 @@ def _format_item_list(data: Any) -> str:
 
 
 def build_multi_source_context(texts: dict[str, Any] | None) -> tuple[str, list[str]]:
-    """从 texts 字典提取 keypoints、notes、vision 材料，生成上下文块。
+    """从 texts 字典提取 keypoints、notes、vision_info 材料，生成上下文块。
 
     Args:
         texts: 请求中包含的 texts 字典
@@ -54,25 +57,30 @@ def build_multi_source_context(texts: dict[str, Any] | None) -> tuple[str, list[
     if not texts or not isinstance(texts, dict):
         return "", []
 
+    allowed_keys = {"transcript", "keypoints", "notes", "vision_info", "actions_text"}
+    unknown = set(texts.keys()) - allowed_keys
+    if unknown:
+        raise ValueError(f"texts 仅支持 {sorted(allowed_keys)}，禁止使用废弃别名: {sorted(unknown)}")
+
     active_labels: list[str] = []
     blocks: list[str] = []
 
-    # 1. 用户核心关键点
-    kp_raw = texts.get("keypoints") or texts.get("core_points")
+    # 1. 用户核心关键点 (严格只认 keypoints)
+    kp_raw = texts.get("keypoints")
     kp_str = _format_item_list(kp_raw)
     if kp_str:
         active_labels.append("keypoints")
         blocks.append(f"### 【用户核心关键点】\n{kp_str}")
 
-    # 2. 用户划线原话与笔记
-    notes_raw = texts.get("notes") or texts.get("user_notes")
+    # 2. 用户划线原话与笔记 (严格只认 notes)
+    notes_raw = texts.get("notes")
     notes_str = _format_item_list(notes_raw)
     if notes_str:
         active_labels.append("notes")
         blocks.append(f"### 【用户划线原话与笔记】\n{notes_str}")
 
-    # 3. 视觉信息参考
-    vision_raw = texts.get("vision") or texts.get("vision_info") or texts.get("ocr")
+    # 3. 视觉信息参考 (严格只认 vision_info)
+    vision_raw = texts.get("vision_info")
     vision_str = _format_item_list(vision_raw)
     if vision_str:
         active_labels.append("vision")
