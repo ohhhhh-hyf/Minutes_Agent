@@ -94,14 +94,24 @@ async def run_background_memory_update(
 
                 if best_id and highest_score >= 0.75:
                     logger.info(f"[Reconciler] 事项闭环结项: {best_id} (相似度 {highest_score:.2f})")
-                    mem.update(
-                        memory_id=best_id,
-                        metadata={
-                            "status": "close",
-                            "closed_at": meeting_time,
-                            "series": series
-                        }
-                    )
+                    if hasattr(mem, "vector_store") and hasattr(mem.vector_store, "update"):
+                        mem.vector_store.update(
+                            vector_id=best_id,
+                            payload={
+                                "status": "close",
+                                "closed_at": meeting_time,
+                                "series": series
+                            }
+                        )
+                    else:
+                        mem.update(
+                            memory_id=best_id,
+                            metadata={
+                                "status": "close",
+                                "closed_at": meeting_time,
+                                "series": series
+                            }
+                        )
                     closed_ids.add(best_id)
 
         # 现存仍处于 open 的事项清单（剔除刚被 close 掉的）
@@ -130,35 +140,48 @@ async def run_background_memory_update(
                     max_sim = sim
                     matched_existing_id = cur["id"]
 
+            new_meta = {
+                "user_id": user_id,
+                "series": series,
+                "meeting_time": meeting_time,
+                "status": "open",
+                "owner": o.get("owner"),
+                "deadline": o.get("deadline"),
+                "role": "user"
+            }
+
             if matched_existing_id and max_sim >= 0.80:
-                # 命中已有任务：老任务延续推进 / 刷新截止时间 -> 【原地 UPDATE，严禁 ADD】
+                # 命中已有任务：老任务延续推进 / 刷新截止时间 -> 【原地 UPDATE，复用 vector_map，0 网络调用】
                 logger.info(f"[Reconciler] 老任务延续刷新 (相似度 {max_sim:.2f}): {matched_existing_id}")
-                mem.update(
-                    memory_id=matched_existing_id,
-                    text=content,  # 刷新为最新表述
-                    metadata={
-                        "series": series,
-                        "meeting_time": meeting_time,
-                        "status": "open",
-                        "owner": o.get("owner"),
-                        "deadline": o.get("deadline")
-                    }
-                )
+                if hasattr(mem, "_update_memory"):
+                    mem._update_memory(
+                        memory_id=matched_existing_id,
+                        data=content,
+                        existing_embeddings=vector_map,
+                        metadata=new_meta
+                    )
+                else:
+                    mem.update(
+                        memory_id=matched_existing_id,
+                        text=content,
+                        metadata=new_meta
+                    )
             else:
-                # 全新事项 -> 真正执行 ADD（使用 infer=False 避免 mem0 内部重复调用大模型提炼）
+                # 全新事项 -> 真正执行立项写入（复用 vector_map 向量直接入库，0 网络调用）
                 logger.info(f"[Reconciler] 全新事项立项写入: {content[:20]}...")
-                mem.add(
-                    messages=content,
-                    user_id=user_id,
-                    infer=False,
-                    metadata={
-                        "series": series,
-                        "meeting_time": meeting_time,
-                        "status": "open",
-                        "owner": o.get("owner"),
-                        "deadline": o.get("deadline")
-                    }
-                )
+                if hasattr(mem, "_create_memory") and content in vector_map:
+                    mem._create_memory(
+                        data=content,
+                        existing_embeddings=vector_map,
+                        metadata=new_meta
+                    )
+                else:
+                    mem.add(
+                        messages=content,
+                        user_id=user_id,
+                        infer=False,
+                        metadata=new_meta
+                    )
 
         # 5. 阶段三：容量熔断守卫 (Zombie Hard Cap = 15)
         current_active = mem.get_all(
@@ -169,10 +192,18 @@ async def run_background_memory_update(
         if len(current_active) > 15:
             overflow_count = len(current_active) - 15
             for stale_item in current_active[15:]:
-                mem.update(
-                    memory_id=stale_item["id"],
-                    metadata={"status": "dormant", "series": series}
-                )
+                stale_id = stale_item["id"]
+                # 直接修改本地 Qdrant 属性，彻底消除无意义的重新 embedding 刷屏！
+                if hasattr(mem, "vector_store") and hasattr(mem.vector_store, "update"):
+                    mem.vector_store.update(
+                        vector_id=stale_id,
+                        payload={"status": "dormant", "series": series}
+                    )
+                else:
+                    mem.update(
+                        memory_id=stale_id,
+                        metadata={"status": "dormant", "series": series}
+                    )
             logger.info(f"[Reconciler] 触发容量上限熔断，已休眠 {overflow_count} 条陈旧待办")
 
     except Exception as e:
