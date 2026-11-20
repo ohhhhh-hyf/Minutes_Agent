@@ -26,13 +26,49 @@ def _split_into_sentences(line: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
-def _enrich_via_keywords_fallback(lines: list[str], active_open_items: list[dict]) -> tuple[list[str], list[tuple[int, dict]]]:
+def _apply_hits_to_lines(lines: list[str], valid_hits: list[dict]) -> tuple[list[str], list[dict]]:
+    """
+    核心规范：
+    1. 按正文出现的物理先后顺序 (line_idx, sent_idx) 升序排序
+    2. 按文章从上到下的顺序重新分配连续递增序号 1, 2, 3...
+    3. 在对应句末插入角标 [1](#ref-1), [2](#ref-2)...
+    4. 仅返回真正命中的有序列表，用于渲染文末 # 历史记忆关联
+    """
+    if not valid_hits:
+        return lines, []
+
+    # 1. 严格按正文出现的物理行号与句号升序排序 (从上到下)
+    valid_hits.sort(key=lambda x: (x["line_idx"], x["sent_idx"]))
+
+    # 2. 为每个命中项分配严格自增的引用编号 (1, 2, 3...)
+    for ref_id, hit in enumerate(valid_hits, start=1):
+        hit["ref_id"] = ref_id
+
+    # 3. 按 (line_idx, sentence) 分组，支持同一句子命中多个历史待办时的平滑合并插标
+    from collections import defaultdict
+    sentence_groups: dict[tuple[int, str], list[int]] = defaultdict(list)
+    for hit in valid_hits:
+        key = (hit["line_idx"], hit["sentence"])
+        sentence_groups[key].append(hit["ref_id"])
+
+    # 4. 执行句末标点后精准插标
+    for (line_idx, sentence), ref_ids in sentence_groups.items():
+        labels = "".join([f" [{r}](#ref-{r})" for r in ref_ids])
+        labeled_sentence = f"{sentence.rstrip()}{labels} "
+        lines[line_idx] = lines[line_idx].replace(sentence, labeled_sentence, 1)
+
+    return lines, valid_hits
+
+
+def _enrich_via_keywords_fallback(lines: list[str], active_open_items: list[dict]) -> tuple[list[str], list[dict]]:
     """兜底策略：当 Embedding API 超时/限流时，退化为本地分句关键词锚定"""
-    matched_items = []
-    for idx, item in enumerate(active_open_items[:15], start=1):
+    valid_hits = []
+    for item in active_open_items[:15]:
         content = item.get("memory", "")
         owner = item.get("metadata", {}).get("owner", "")
         needles = [w for w in [owner, content[:6]] if w and len(w) >= 2]
+        if not needles:
+            continue
 
         matched = False
         for i, line in enumerate(lines):
@@ -42,17 +78,20 @@ def _enrich_via_keywords_fallback(lines: list[str], active_open_items: list[dict
             if not sentences:
                 continue
 
-            for s in sentences:
+            for sent_idx, s in enumerate(sentences):
                 if any(needle in s for needle in needles):
-                    # 精准在匹配句子的句末插入角标
-                    labeled_s = f"{s.rstrip()} [{idx}](#ref-{idx}) "
-                    lines[i] = lines[i].replace(s, labeled_s, 1)
+                    valid_hits.append({
+                        "line_idx": i,
+                        "sent_idx": sent_idx,
+                        "sentence": s,
+                        "item": item,
+                    })
                     matched = True
                     break
             if matched:
                 break
-        matched_items.append((idx, item))
-    return lines, matched_items
+
+    return _apply_hits_to_lines(lines, valid_hits)
 
 
 def _get_embeddings(embedder, texts: list[str]) -> list[list[float]]:
@@ -86,26 +125,26 @@ def enrich_markdown_with_history(
         return minutes_md
 
     lines = minutes_md.split("\n")
-    matched_items: list[tuple[int, dict]] = []
+    ordered_hits: list[dict] = []
 
     # 1. 尝试主通道：分句级 BGE-M3 语义打标 (~100ms)
     if embedder is not None:
         try:
-            # 收集候选语意句：记录 (line_idx, sentence_str)
-            candidate_records: list[tuple[int, str]] = []
+            # 收集候选语意句：记录 (line_idx, sent_idx, sentence_str)
+            candidate_records: list[tuple[int, int, str]] = []
             for i, line in enumerate(lines):
                 stripped = line.strip()
                 # 跳过标题、分割线、表格、代码块等非正文行
                 if not stripped or stripped.startswith(("#", "---", "|", "```", "<a ")) or len(stripped) < 4:
                     continue
                 sentences = _split_into_sentences(line)
-                for s in sentences:
+                for sent_idx, s in enumerate(sentences):
                     s_clean = s.strip()
                     if len(s_clean) >= 4 and not s_clean.startswith(("#", "- [ ]")):
-                        candidate_records.append((i, s))
+                        candidate_records.append((i, sent_idx, s))
 
             if candidate_records:
-                candidate_texts = [r[1].strip() for r in candidate_records]
+                candidate_texts = [r[2].strip() for r in candidate_records]
                 mem_texts = [item.get("memory", "") for item in active_open_items[:15]]
                 all_texts = candidate_texts + mem_texts
 
@@ -117,33 +156,44 @@ def enrich_markdown_with_history(
                 # NumPy 矩阵瞬间算分
                 sim_matrix = cosine_similarity_matrix(candidate_vectors, mem_vectors)
 
-                for mem_idx, item in enumerate(active_open_items[:15], start=1):
-                    col_scores = sim_matrix[:, mem_idx - 1]
+                valid_hits = []
+                for mem_i, item in enumerate(active_open_items[:15]):
+                    col_scores = sim_matrix[:, mem_i]
                     best_cand_idx = int(np.argmax(col_scores))
                     best_score = float(col_scores[best_cand_idx])
 
                     # 语义门禁阈值：相似度 >= 0.68 判定该分句与该历史事项高度对齐
                     if best_score >= 0.68:
-                        target_line_idx, target_sentence = candidate_records[best_cand_idx]
-                        # 句末标点后精准插标，不破坏段落其他文字
-                        labeled_sentence = f"{target_sentence.rstrip()} [{mem_idx}](#ref-{mem_idx}) "
-                        lines[target_line_idx] = lines[target_line_idx].replace(target_sentence, labeled_sentence, 1)
+                        line_idx, sent_idx, target_sentence = candidate_records[best_cand_idx]
+                        valid_hits.append({
+                            "line_idx": line_idx,
+                            "sent_idx": sent_idx,
+                            "sentence": target_sentence,
+                            "item": item,
+                            "score": best_score,
+                        })
 
-                    matched_items.append((mem_idx, item))
+                lines, ordered_hits = _apply_hits_to_lines(lines, valid_hits)
             else:
-                matched_items = list(enumerate(active_open_items[:15], start=1))
+                lines, ordered_hits = _enrich_via_keywords_fallback(lines, active_open_items)
         except Exception as e:
             logger.warning(f"[MemoryRender] BGE-M3 向量打标异常，自动降级为规则匹配: {e}")
-            lines, matched_items = _enrich_via_keywords_fallback(lines, active_open_items)
+            lines, ordered_hits = _enrich_via_keywords_fallback(lines, active_open_items)
     else:
-        lines, matched_items = _enrich_via_keywords_fallback(lines, active_open_items)
+        lines, ordered_hits = _enrich_via_keywords_fallback(lines, active_open_items)
 
-    # 2. 文末追加一级标题 # 历史记忆关联
+    # 2. 若本次会议未引用任何历史事项，则完全不追加文末卡片，保持纪要干净纯洁
+    if not ordered_hits:
+        return "\n".join(lines)
+
+    # 3. 文末仅追加实际在文中被引用的历史条目，序号与正文出现顺序严格 1:1 递增对齐
     footer_lines = ["\n\n---\n# 历史记忆关联\n"]
-    for idx, item in matched_items:
+    for hit in ordered_hits:
+        ref_id = hit["ref_id"]
+        item = hit["item"]
         meta = item.get("metadata", {})
-        anchor = f'<a id="ref-{idx}"></a>'
-        line = f"- {anchor}[{idx}] {item.get('memory', '')}\n"
+        anchor = f'<a id="ref-{ref_id}"></a>'
+        line = f"- {anchor}[{ref_id}] {item.get('memory', '')}\n"
         line += f"  - 来源：{meta.get('meeting_time', '历史会议')} {meta.get('series', '')}\n"
 
         extra = []
