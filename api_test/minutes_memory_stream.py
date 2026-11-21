@@ -25,9 +25,9 @@ import requests
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 STREAM_URL = f"{BASE_URL}/api/agent/v1/stream"
 
-# ── 租户与系列参数 ──
+# ── 租户与记忆链接参数 ──
 USER_ID = os.getenv("API_USER_ID", "user_payment_prod")
-SERIES = "支付系统技术周会"               # 核心阀门：携带 series 触发跨场次记忆追踪
+MEMORY_LINK = "支付系统技术周会"           # 核心阀门：携带 memory_link 触发跨场次记忆追踪
 MEETING_TIME = "2026/11/20 14:00"      # 会议时间（用于待办追溯与 Calendar 映射）
 
 # ── 会议转写文本（可直接在此替换测试文本）──
@@ -55,7 +55,7 @@ def main():
         print("[提示] TRANSCRIPT 文本为空，请在脚本顶部填入待测试的会议转写内容。")
         return
 
-    # 严格对齐工程 TaskRequest 契约规范，显式携带 series 字段
+    # 严格对齐工程 TaskRequest 契约规范，显式携带 memory_link 字段
     payload = {
         "task": "minutes",
         "texts": {
@@ -65,7 +65,7 @@ def main():
             "vision_info": "",
         },
         "docs": [],
-        "series": SERIES,  # 顶层传递系列名称
+        "memory_link": MEMORY_LINK,  # 顶层传递记忆链接名称
         "extra": {
             "template": "general_minutes",  # 指定通用模板（留空则自动智能分类）
             "time": MEETING_TIME,           # 会议时间
@@ -87,7 +87,7 @@ def main():
     print("=" * 80)
     print(f"[发起请求] 接口地址 : {STREAM_URL}")
     print(f"[请求元数据] 用户 ID   : {USER_ID}")
-    print(f"[请求元数据] 系列名称 : {SERIES} (触发跨场次长期记忆)")
+    print(f"[请求元数据] 记忆链接 : {MEMORY_LINK} (触发跨场次长期记忆)")
     print(f"[请求元数据] 会议时间 : {MEETING_TIME}")
     print(f"[请求元数据] 请求 ID   : {req_id}")
     print("=" * 80)
@@ -189,7 +189,7 @@ def main():
             print(f"      - 文件名: {p_mem.name} (大小: {size} 字节, 包含句末插标与文末历史卡片)")
         else:
             print(f"  [!] 记忆增强纪要路径未找到: {memory_file_path}")
-    elif SERIES:
+    elif MEMORY_LINK:
         print("  [*] 未生成独立的 memory_file（请检查服务日志中记忆快轨执行状态）")
 
     print("=" * 80)

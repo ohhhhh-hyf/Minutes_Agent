@@ -37,7 +37,7 @@ def _delete_memory_item(mem, item_id: str):
 async def run_background_memory_update(
     minutes_md: str,
     active_open_items: list[dict],
-    series: str,
+    memory_link: str,
     user_id: str,
     meeting_time: str,
     mem
@@ -151,7 +151,7 @@ async def run_background_memory_update(
             cat = o.get("category", "action")
             new_meta = {
                 "user_id": user_id,
-                "series": series,
+                "memory_link": memory_link,
                 "meeting_time": meeting_time,
                 "status": "open",
                 "category": cat,
@@ -226,7 +226,7 @@ async def run_background_memory_update(
 
         # 5. 阶段三：容量熔断守卫 (Zombie Hard Cap = 30 条，显式按时间戳降序排序)
         current_active = mem.get_all(
-            filters={"user_id": user_id, "series": series, "status": "open"},
+            filters={"user_id": user_id, "memory_link": memory_link, "status": "open"},
             top_k=60
         ).get("results", [])
 

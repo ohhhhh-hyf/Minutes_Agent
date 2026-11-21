@@ -481,7 +481,25 @@ def test_agenda_plan_schema_strict_validation():
     resp6 = client.post("/api/agent/v1/stream", json=req_vlm)
     assert resp6.status_code == 200
 
-    # 7. 严格负向校验：extra 中包含 series 必须报 422 (Unprocessable Entity)
+    # 7. 顶层 memory_link 正确解析并通过
+    req_memory_link = {
+        "task": "minutes",
+        "memory_link": "架构治理周会",
+        "texts": {"transcript": "发言者1：开会。"},
+    }
+    resp7 = client.post("/api/agent/v1/stream", json=req_memory_link)
+    assert resp7.status_code == 200
+
+    # 8. 严格负向校验：extra 中包含 memory_link 必须报 422 (Unprocessable Entity)
+    req_bad_memlink = {
+        "task": "minutes",
+        "texts": {"transcript": "开会"},
+        "extra": {"memory_link": "测试系列"}
+    }
+    resp_bad_memlink = client.post("/api/agent/v1/stream", json=req_bad_memlink)
+    assert resp_bad_memlink.status_code == 422
+
+    # 9. 严格负向校验：extra 中包含废弃字段 series 必须报 422 (Unprocessable Entity)
     req_bad_series = {
         "task": "minutes",
         "texts": {"transcript": "开会"},
@@ -490,7 +508,7 @@ def test_agenda_plan_schema_strict_validation():
     resp_bad_series = client.post("/api/agent/v1/stream", json=req_bad_series)
     assert resp_bad_series.status_code == 422
 
-    # 8. 严格负向校验：extra 中包含 agenda 必须报 422
+    # 10. 严格负向校验：extra 中包含 agenda 必须报 422
     req_bad_agenda = {
         "task": "minutes",
         "texts": {"transcript": "开会"},
@@ -499,7 +517,7 @@ def test_agenda_plan_schema_strict_validation():
     resp_bad_agenda = client.post("/api/agent/v1/stream", json=req_bad_agenda)
     assert resp_bad_agenda.status_code == 422
 
-    # 9. 严格负向校验：agenda_plan 中包含已废弃的 agenda_items 必须报 422
+    # 11. 严格负向校验：agenda_plan 中包含已废弃的 agenda_items 必须报 422
     req_bad_agenda_items = {
         "task": "minutes",
         "texts": {"transcript": "开会"},
@@ -512,7 +530,7 @@ def test_agenda_plan_schema_strict_validation():
     resp_bad_items = client.post("/api/agent/v1/stream", json=req_bad_agenda_items)
     assert resp_bad_items.status_code == 422
 
-    # 10. 严格负向校验：texts 中包含废弃别名 core_points 必须报 422
+    # 12. 严格负向校验：texts 中包含废弃别名 core_points 必须报 422
     req_bad_texts = {
         "task": "minutes",
         "texts": {"transcript": "开会", "core_points": "点"}

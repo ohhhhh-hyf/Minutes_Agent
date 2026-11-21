@@ -31,7 +31,7 @@ from tasks.minutes.memory.render import enrich_markdown_with_history
 from tasks.minutes.memory.reconciler import run_background_memory_update
 
 USER_ID = "test_user_regression"
-SERIES = "跨场次回归测试技术周会"
+MEMORY_LINK = "跨场次回归测试技术周会"
 DATA_DIR = AGENT_ROOT / "data"
 
 
@@ -69,7 +69,7 @@ async def main():
     await run_background_memory_update(
         minutes_md=minutes_1,
         active_open_items=[],
-        series=SERIES,
+        memory_link=MEMORY_LINK,
         user_id=USER_ID,
         meeting_time="2026/11/13 14:00",
         mem=mem
@@ -77,7 +77,7 @@ async def main():
 
     # 核验第 1 场入库结果
     items_m1 = mem.get_all(
-        filters={"user_id": USER_ID, "series": SERIES, "status": "open"},
+        filters={"user_id": USER_ID, "memory_link": MEMORY_LINK, "status": "open"},
         top_k=30
     ).get("results", [])
 
@@ -101,7 +101,7 @@ async def main():
 
     # 1. 快轨消费阶段：捞取当前库中事项
     active_for_m2 = mem.get_all(
-        filters={"user_id": USER_ID, "series": SERIES, "status": "open"},
+        filters={"user_id": USER_ID, "memory_link": MEMORY_LINK, "status": "open"},
         top_k=30
     ).get("results", [])[:30]
 
@@ -146,7 +146,7 @@ async def main():
     await run_background_memory_update(
         minutes_md=minutes_2,
         active_open_items=active_for_m2,
-        series=SERIES,
+        memory_link=MEMORY_LINK,
         user_id=USER_ID,
         meeting_time="2026/11/20 14:00",
         mem=mem
@@ -154,7 +154,7 @@ async def main():
 
     # 核验第 2 场慢轨结束后的数据库状态
     items_m2 = mem.get_all(
-        filters={"user_id": USER_ID, "series": SERIES, "status": "open"},
+        filters={"user_id": USER_ID, "memory_link": MEMORY_LINK, "status": "open"},
         top_k=30
     ).get("results", [])
 
@@ -176,8 +176,8 @@ async def main():
     assert not zhangsan_alive, "❌ 失败：宣告办结的张三任务未被物理删除！"
     print("✅ 验证通过：办结的待办任务 (张三) 已被彻底物理删除！")
 
-    # 3. 仍在推进中的徐玥任务必须依然存活
-    xuyue_alive = any("徐玥" in it.get("memory", "") for it in items_m2)
+    # 3. 仍在推进中的徐玥任务必须依然存活 (支持从正文或 metadata.owner 校验)
+    xuyue_alive = any("徐玥" in (it.get("memory", "") + str(it.get("metadata", {}).get("owner", ""))) for it in items_m2)
     assert xuyue_alive, "❌ 失败：推进中的徐玥任务被误删！"
     print("✅ 验证通过：未完成的活跃待办 (徐玥) 完好存活！")
 
@@ -209,7 +209,7 @@ async def main():
             infer=False,
             metadata={
                 "user_id": USER_ID,
-                "series": SERIES,
+                "memory_link": MEMORY_LINK,
                 "status": "open",
                 "category": "action",
                 "meeting_time": sim_time,
@@ -217,7 +217,7 @@ async def main():
             }
         )
 
-    before_cap_items = mem.get_all(filters={"user_id": USER_ID, "series": SERIES, "status": "open"}, top_k=60).get("results", [])
+    before_cap_items = mem.get_all(filters={"user_id": USER_ID, "memory_link": MEMORY_LINK, "status": "open"}, top_k=60).get("results", [])
     print(f"-> 熔断触发前库内存量待办: {len(before_cap_items)} 条")
     assert len(before_cap_items) > 30, "注入失败，条数未超过 30"
 
@@ -226,14 +226,14 @@ async def main():
     await run_background_memory_update(
         minutes_md="# 例行快速同步会议\n无重大议题讨论。",
         active_open_items=before_cap_items[:30],
-        series=SERIES,
+        memory_link=MEMORY_LINK,
         user_id=USER_ID,
         meeting_time="2026/11/21 14:00",
         mem=mem
     )
 
     # 核验熔断后的数据量与排序正确性
-    after_cap_items = mem.get_all(filters={"user_id": USER_ID, "series": SERIES, "status": "open"}, top_k=60).get("results", [])
+    after_cap_items = mem.get_all(filters={"user_id": USER_ID, "memory_link": MEMORY_LINK, "status": "open"}, top_k=60).get("results", [])
     active_actions_after = [it for it in after_cap_items if it.get("metadata", {}).get("category") == "action"]
     print(f"-> 熔断执行完毕，当前活跃 action 待办数: {len(active_actions_after)} 条")
 

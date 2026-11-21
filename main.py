@@ -191,8 +191,8 @@ class TaskRequest(BaseModel):
     """统一严格请求体契约（严格对齐根项目，彻底移除 domain，严格固定 texts 与 extra）."""
 
     task: str = Field(default="minutes", description="任务类型: minutes (纪要) 或 actions (待办)")
-    series: Optional[str] = Field(
-        default=None, description="会议系列标识（如 '技术架构周会'，用于触发跨场次长期记忆追踪）"
+    memory_link: Optional[str] = Field(
+        default=None, description="记忆链接通道（如 '技术架构周会'，用于触发跨场次长期记忆追踪，不传则不开启记忆）"
     )
     texts: dict[str, str] = Field(
         default_factory=dict,
@@ -262,7 +262,7 @@ async def stream_agent_endpoint(
     user_id, req_id = _resolve_ids(x_user_id, x_request_id)
     response.headers["X-Request-Id"] = req_id
 
-    series_val = (body.series or "").strip() or None
+    memory_link_val = (body.memory_link or "").strip() or None
     extra_dict = {
         "template": body.extra.template,
         "time": body.extra.time,
@@ -273,7 +273,7 @@ async def stream_agent_endpoint(
         async for line in stream_minutes_agent(
             transcript=transcript_val,
             template_id=body.extra.template,
-            series=series_val or "",
+            memory_link=memory_link_val or "",
             docs=body.docs,
             texts=body.texts,
             extra=extra_dict,
@@ -325,7 +325,7 @@ async def sync_agent_endpoint(
     if not transcript_val and not body.docs:
         raise HTTPException(status_code=400, detail="texts.transcript 与 docs 不能同时为空")
 
-    series_val = (body.series or "").strip() or None
+    memory_link_val = (body.memory_link or "").strip() or None
     extra_dict = {
         "template": body.extra.template,
         "time": body.extra.time,
@@ -335,7 +335,7 @@ async def sync_agent_endpoint(
     markdown_text, last_done = await generate_minutes(
         transcript=transcript_val,
         template_id=body.extra.template,
-        series=series_val or "",
+        memory_link=memory_link_val or "",
         docs=body.docs,
         texts=body.texts,
         extra=extra_dict,

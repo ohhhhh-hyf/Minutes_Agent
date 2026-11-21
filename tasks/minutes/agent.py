@@ -156,7 +156,7 @@ async def stream_minutes_agent(
     *,
     transcript: str,
     template_id: str = "",
-    series: str = "",
+    memory_link: str = "",
     docs: list[str] | None = None,
     texts: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
@@ -319,17 +319,17 @@ async def stream_minutes_agent(
     except Exception as io_err:
         logger.warning(f"[ARTIFACT:SAVE:ERROR] type=minutes path={target_path} err={io_err}")
 
-    # 7.2 跨场次长期记忆双轨流转 (若顶层显式传入 series 系列标识)
+    # 7.2 跨场次长期记忆双轨流转 (若顶层显式传入 memory_link 记忆通道标识)
     final_markdown = cleaned_markdown
     memory_target_path: Path | None = None
-    series_name = (series or "").strip()
-    if series_name:
+    link_name = (memory_link or "").strip()
+    if link_name:
         meeting_time = (extra.get("time") or "").strip() if isinstance(extra, dict) else "未知时间"
         try:
             mem = get_user_memory(uid, data_dir=DEFAULT_DATA_DIR)
             # 毫秒级捞取历史 open 项 (Mem0 原生 top_k=30 + 切片双重保护)
             active_open_items = mem.get_all(
-                filters={"user_id": uid, "series": series_name, "status": "open"},
+                filters={"user_id": uid, "memory_link": link_name, "status": "open"},
                 top_k=30,
             ).get("results", [])[:30]
 
@@ -338,7 +338,7 @@ async def stream_minutes_agent(
                 run_background_memory_update(
                     minutes_md=cleaned_markdown,
                     active_open_items=active_open_items,
-                    series=series_name,
+                    memory_link=link_name,
                     user_id=uid,
                     meeting_time=meeting_time,
                     mem=mem,
@@ -391,7 +391,7 @@ async def stream_minutes_agent(
     data_payload: dict[str, Any] = {
         "content": final_markdown,
         "text": final_markdown,
-        "file_name": memory_target_path.name if (series_name and memory_target_path and memory_target_path.is_file()) else target_path.name,
+        "file_name": memory_target_path.name if (link_name and memory_target_path and memory_target_path.is_file()) else target_path.name,
         "minutes_file": str(target_path),
     }
     if memory_target_path and memory_target_path.is_file():
@@ -414,7 +414,7 @@ async def generate_minutes(
     *,
     transcript: str,
     template_id: str = "",
-    series: str = "",
+    memory_link: str = "",
     docs: list[str] | None = None,
     texts: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
@@ -431,7 +431,7 @@ async def generate_minutes(
     async for line in stream_minutes_agent(
         transcript=transcript,
         template_id=template_id,
-        series=series,
+        memory_link=memory_link,
         docs=docs,
         texts=texts,
         extra=extra,

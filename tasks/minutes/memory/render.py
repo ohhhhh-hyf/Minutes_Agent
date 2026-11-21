@@ -194,7 +194,7 @@ def enrich_markdown_with_history(
         meta = item.get("metadata", {})
         anchor = f'<a id="ref-{ref_id}"></a>'
         line = f"- {anchor}[{ref_id}] {item.get('memory', '')}\n"
-        line += f"  - 来源：{meta.get('meeting_time', '历史会议')} {meta.get('series', '')}\n"
+        line += f"  - 来源：{meta.get('meeting_time', '历史会议')} {meta.get('memory_link') or meta.get('series', '')}\n"
 
         extra = []
         if meta.get("owner"):
