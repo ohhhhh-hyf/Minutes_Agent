@@ -33,21 +33,22 @@ _MEMORY_CLIENT_CACHE: dict[str, Memory] = {}
 
 def _build_llm_config() -> dict:
     backend = os.getenv("LLM_BACKEND", "http").lower()
-    if backend == "vllm":
+    # 只要是 SFT (HTTP/WebSocket) 或 vLLM 等内部网络后端，LLM 实际推理不走 mem0，为 mem0 组装合法的占位配置即可
+    if backend in ("sft", "vllm", "websocket", "sft_http", "sft_gateway"):
         return {
             "provider": "openai",
             "config": {
-                "model": os.getenv("LLM_VLLM_MODEL", "deepseek-v4-flash-0731"),
-                "api_key": os.getenv("LLM_VLLM_API_KEY", "EMPTY"),
-                "openai_base_url": os.getenv("LLM_VLLM_BASE_URL", "http://127.0.0.1:8000/v1"),
-                "temperature": float(os.getenv("LLM_VLLM_TEMPERATURE", 0.1))
-            }
+                "model": "dummy-placeholder",
+                "api_key": "EMPTY",  # 关键点：给一个非空字符串，骗过 OpenAI SDK 的构造校验
+                "openai_base_url": "http://127.0.0.1:8000/v1",
+                "temperature": 0.1,
+            },
         }
     else:  # http (DeepSeek 官方 API)
         base_url = os.getenv("DEEPSEEK_BASE_URL") or os.getenv("LLM_BASE_URL") or "https://api.deepseek.com"
         if not base_url.endswith("/v1"):
             base_url = f"{base_url.rstrip('/')}/v1"
-        api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY") or ""
+        api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY") or "EMPTY"
         model = os.getenv("DEEPSEEK_MODEL") or os.getenv("LLM_MODEL") or "deepseek-chat"
         temp = float(os.getenv("DEEPSEEK_TEMPERATURE") or os.getenv("LLM_TEMPERATURE") or 0.1)
         return {
@@ -56,14 +57,14 @@ def _build_llm_config() -> dict:
                 "model": model,
                 "api_key": api_key,
                 "openai_base_url": base_url,
-                "temperature": temp
-            }
+                "temperature": temp,
+            },
         }
 
 
 def _build_embedder_config() -> dict:
     model = os.getenv("KNOWLEDGE_EMBEDDING_MODEL") or os.getenv("EMBEDDING_MODEL") or "BAAI/bge-m3"
-    api_key = os.getenv("SILICONFLOW_API_KEY") or os.getenv("EMBEDDING_API_KEY") or ""
+    api_key = os.getenv("SILICONFLOW_API_KEY") or os.getenv("EMBEDDING_API_KEY") or "EMPTY"
     base_url = os.getenv("KNOWLEDGE_EMBEDDING_BASE_URL") or os.getenv("EMBEDDING_BASE_URL") or "https://api.siliconflow.cn/v1"
     return {
         "provider": "openai",
