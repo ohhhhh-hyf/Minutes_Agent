@@ -175,7 +175,7 @@ def call_minutes_stream(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Excel 批量流式生成会议纪要与 TTFT 统计脚本")
-    ap.add_argument("--file", default=str(DEMO_ROOT / "now.xlsx"), help="输入工作簿")
+    ap.add_argument("--file", default=str(DEMO_ROOT / "now_sft.xlsx"), help="输入工作簿")
     ap.add_argument("--sheet", default=DEFAULT_SHEET, help="sheet 名")
     ap.add_argument("--start", type=int, default=2, help="起始行（默认 2）")
     ap.add_argument("--end", type=int, default=56, help="结束行（默认 56）")
@@ -186,7 +186,7 @@ def main() -> int:
     ap.add_argument("--col-len", type=int, default=5, help="文本长度列（默认 5 = E）")
     ap.add_argument("--col-ttft", type=int, default=6, help="首字时延列（默认 6 = F）")
     ap.add_argument("--out", default="", help="输出工作簿")
-    ap.add_argument("--base-url", default=os.getenv("AGENTFLOW_BASE_URL", "http://10.33.240.226:8003"), help="服务地址")
+    ap.add_argument("--base-url", default=os.getenv("AGENTFLOW_BASE_URL", "http://10.33.240.226:8006"), help="服务地址")
     ap.add_argument("--path", default="/api/agent/v1/stream", help="流式接口路径")
     ap.add_argument("--user", default="test", help="X-User-Id")
     ap.add_argument("--date", default="", help="会议时间")
