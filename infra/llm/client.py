@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Iterable
 from typing import Any
 
 from .config import LLMSettings, resolve_llm_settings
+from .ws_client import acomplete_sft, astream_sft
 
 logger = logging.getLogger("infra.llm.client")
 
@@ -68,48 +69,12 @@ class LLMClient:
 
     def _build_request(self, body: dict[str, Any]) -> urllib.request.Request:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        if self._is_sft:
-            if not self.cfg.sender:
-                raise ValueError("SFT 后端缺少 LLM_SFT_SENDER 配置")
-            headers = {
-                "Content-Type": "text/plain; charset=UTF-8",
-                "sender": self.cfg.sender,
-            }
-        else:
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
         url = f"{self.base_url}/chat/completions"
         return urllib.request.Request(url, data=payload, headers=headers, method="POST")
-
-    def _build_sft_body(
-        self,
-        messages: list[dict[str, str]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-    ) -> dict[str, Any]:
-        """组装 SFT 网关请求体（对齐 nlu_client_v2_api_sample.py 的 generate 协议）."""
-        temp = self.temperature if temperature is None else float(temperature)
-        mt = self.cfg.sft_max_tokens if max_tokens is None else int(max_tokens)
-        body: dict[str, Any] = {
-            "model": self.model,
-            "api_key": self.api_key,
-            "stream": False,
-            "messages": messages,
-            "extra_body": {
-                "enable_thinking": bool(self.cfg.enable_thinking),
-                "skip_special_tokens": bool(self.cfg.skip_special_tokens),
-            },
-            "thinking": {"type": "enabled" if self.cfg.enable_thinking else "disabled"},
-            "modelParam": {
-                "temperature": temp,
-                "top_k": int(self.cfg.top_k),
-            },
-        }
-        if mt is not None:
-            body["max_tokens"] = mt
-        return body
 
     def _record_usage(self, usage: dict[str, Any] | None) -> None:
         if not isinstance(usage, dict):
@@ -126,77 +91,6 @@ class LLMClient:
             self.usage_totals["completion_tokens"] += int(usage.get("completion_tokens") or 0)
             self.usage_totals["total_tokens"] += total
 
-    def _parse_sft_response(self, raw_data: str) -> tuple[str, dict[str, Any]]:
-        """解析 SFT 网关响应（兼容双层 JSON 字符串与 HTTP 200 业务错误）."""
-        obj: Any = json.loads(raw_data)
-        if isinstance(obj, str):
-            obj = json.loads(obj)
-        if not isinstance(obj, dict):
-            raise RuntimeError(f"SFT 返回格式异常: {type(obj).__name__}")
-
-        error = obj.get("error")
-        if error:
-            if isinstance(error, dict):
-                desc = error.get("desc") or error.get("message") or error
-            else:
-                desc = str(error)
-            raise RuntimeError(f"SFT 调用失败: {desc}")
-
-        choices = obj.get("choices") or []
-        if not choices:
-            debug = obj.get("debug_info") or {}
-            desc = debug.get("desc") if isinstance(debug, dict) else ""
-            raise RuntimeError(f"SFT 返回空 choices: {desc or 'no debug info'}")
-
-        choice = choices[0] or {}
-        if choice.get("finish_reason") == "aborted":
-            debug = obj.get("debug_info") or {}
-            desc = debug.get("desc") if isinstance(debug, dict) else ""
-            raise RuntimeError(f"SFT 调用被中止: {desc or 'aborted'}")
-
-        message = choice.get("message") or {}
-        content = message.get("content") or ""
-        finish_reason = choice.get("finish_reason")
-        if finish_reason == "length":
-            logger.warning("[LLM:SFT] finish_reason=length, output may be truncated")
-        if not content:
-            raise RuntimeError(f"SFT 返回空 content (finish_reason={finish_reason})")
-        return content, obj.get("usage") or {}
-
-    def _chat_sft_sync(
-        self,
-        messages: list[dict[str, str]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        timeout: float | None = None,
-    ) -> str:
-        """SFT 网关非流式调用（仅对网络错误重试，业务错误立即抛出）."""
-        to_val = self.timeout if timeout is None else float(timeout)
-        body = self._build_sft_body(messages, temperature=temperature, max_tokens=max_tokens)
-        t0 = time.perf_counter()
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                req = self._build_request(body)
-                with urllib.request.urlopen(req, timeout=to_val) as resp:
-                    raw_data = resp.read().decode("utf-8", errors="replace")
-                    content, usage = self._parse_sft_response(raw_data)
-                    self._record_usage(usage)
-                    logger.info(
-                        "[LLM:SFT:DONE] model=%s dur=%.3fs content_len=%d",
-                        self.model,
-                        time.perf_counter() - t0,
-                        len(content),
-                    )
-                    return content
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
-                if attempt >= self.max_retries:
-                    logger.error("[LLMClient] SFT 调用失败 (attempt=%d): %s", attempt, exc)
-                    raise RuntimeError(f"SFT 调用失败: {exc}") from exc
-                time.sleep(self._retry_delay(attempt))
-
-        raise RuntimeError("SFT 调用超过最大重试次数")
-
     def _stream_sync(
         self,
         messages: list[dict[str, str]],
@@ -204,18 +98,7 @@ class LLMClient:
         max_tokens: int | None = None,
         timeout: float | None = None,
     ) -> Iterable[str]:
-        """同步读取流式响应；SFT 网关不支持 SSE，降级为非流式后整段产出."""
-        if self._is_sft:
-            content = self._chat_sft_sync(
-                messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout,
-            )
-            if content:
-                yield content
-            return
-
+        """同步读取 SSE 流式响应, 逐块产出 content 增量."""
         temp = self.temperature if temperature is None else float(temperature)
         to_val = self.timeout if timeout is None else float(timeout)
 
@@ -284,6 +167,38 @@ class LLMClient:
             {"role": "system", "content": sys_val},
             {"role": "user", "content": usr_val},
         ]
+
+        if self._is_sft:
+            t0 = time.perf_counter()
+            first_token_logged = False
+            chunks_count = 0
+            usage_holder: dict[str, Any] = {}
+            logger.info(f"[LLM:STREAM:START] model={self.model} stream=True")
+            async for delta in astream_sft(
+                url=self.base_url,
+                sender=self.cfg.sender,
+                api_key=self.api_key,
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature if temperature is None else float(temperature),
+                max_tokens=self.cfg.sft_max_tokens if max_tokens is None else int(max_tokens),
+                top_k=self.cfg.top_k,
+                enable_thinking=self.cfg.enable_thinking,
+                skip_special_tokens=self.cfg.skip_special_tokens,
+                recv_timeout=self.timeout if timeout is None else float(timeout),
+                usage_out=usage_holder,
+            ):
+                if not first_token_logged:
+                    ttft = time.perf_counter() - t0
+                    logger.info(f"[LLM:STREAM:FIRST_TOKEN] ttft={ttft:.3f}s")
+                    first_token_logged = True
+                chunks_count += 1
+                yield delta
+            self._record_usage(usage_holder)
+            dur = time.perf_counter() - t0
+            logger.info(f"[LLM:STREAM:DONE] dur={dur:.3f}s chunks={chunks_count}")
+            return
+
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -332,15 +247,7 @@ class LLMClient:
         max_tokens: int | None = None,
         timeout: float | None = None,
     ) -> str:
-        """非流式单次同步调用；SFT 后端走独立网关协议."""
-        if self._is_sft:
-            return self._chat_sft_sync(
-                messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout,
-            )
-
+        """非流式单次同步调用."""
         temp = self.temperature if temperature is None else float(temperature)
         to_val = self.timeout if timeout is None else float(timeout)
 
@@ -393,6 +300,26 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
+
+        if self._is_sft:
+            t0 = time.perf_counter()
+            content, usage = await acomplete_sft(
+                url=self.base_url,
+                sender=self.cfg.sender,
+                api_key=self.api_key,
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature if temperature is None else float(temperature),
+                max_tokens=self.cfg.sft_max_tokens if max_tokens is None else int(max_tokens),
+                top_k=self.cfg.top_k,
+                enable_thinking=self.cfg.enable_thinking,
+                skip_special_tokens=self.cfg.skip_special_tokens,
+                recv_timeout=self.timeout if timeout is None else float(timeout),
+            )
+            self._record_usage(usage)
+            logger.info(f"[LLM:CHAT:DONE] model={self.model} dur={time.perf_counter() - t0:.3f}s")
+            return content
+
         return await asyncio.to_thread(
             self._chat_sync,
             messages,

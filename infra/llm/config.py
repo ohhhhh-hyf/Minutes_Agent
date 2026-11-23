@@ -58,8 +58,8 @@ def resolve_llm_settings(
     """解析并生成最终 LLM 配置.
 
     模式支持:
-    0. SFT 网关 (LLM_BACKEND=sft):
-       - LLM_SFT_BASE_URL (默认 http://10.32.101.24:8086/llm/openai)
+    0. SFT WebSocket 网关 (LLM_BACKEND=sft):
+       - LLM_SFT_WS_URL (默认 ws://10.32.101.24:18087/llm/websocket/openai/chat/completions)
        - LLM_SFT_API_KEY (默认 AccessService)
        - LLM_SFT_SENDER (必填，header sender)
        - LLM_SFT_MODEL (默认 deepseek-ai/DeepSeek-V4.1-Flash-1017/SFT)
@@ -82,11 +82,9 @@ def resolve_llm_settings(
         key = (api_key or os.getenv("LLM_SFT_API_KEY") or "AccessService").strip()
         url = (
             base_url
-            or os.getenv("LLM_SFT_BASE_URL")
-            or "http://10.32.101.24:8086/llm/openai"
-        ).strip().rstrip("/")
-        if url.endswith("/chat/completions"):
-            url = url[: -len("/chat/completions")].rstrip("/")
+            or os.getenv("LLM_SFT_WS_URL")
+            or "ws://10.32.101.24:18087/llm/websocket/openai/chat/completions"
+        ).strip()
         mdl = (
             model
             or os.getenv("LLM_SFT_MODEL")
