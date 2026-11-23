@@ -90,6 +90,7 @@ async def main():
     assert len(items_m1) >= 2, f"第 1 场应至少提取 2 条事项，实际 {len(items_m1)}"
     has_decision_1 = any(it.get("metadata", {}).get("category") == "decision" for it in items_m1)
     has_action_1 = any(it.get("metadata", {}).get("category") == "action" for it in items_m1)
+    old_decision_ids = {it["id"] for it in items_m1 if it.get("metadata", {}).get("category") == "decision"}
     print(f"✅ 第 1 场核验通过: decision={has_decision_1}, action={has_action_1}")
 
     # =========================================================================
@@ -166,8 +167,8 @@ async def main():
         print(f"   * [{cat}] {mem_text} (owner={owner})")
 
     # 严格断言物理删除有效性：
-    # 1. 第 1 场旧决议（千问模型）必须彻底消失（被物理删除）
-    old_decision_alive = any("千问模型方案" in it.get("memory", "") and it.get("metadata", {}).get("category") == "decision" for it in items_m2)
+    # 1. 第 1 场旧决议（千问模型: 暂缓自研管线）必须彻底消失（被物理删除）
+    old_decision_alive = any((it["id"] in old_decision_ids or "暂缓自研管线" in it.get("memory", "")) for it in items_m2)
     assert not old_decision_alive, "❌ 失败：上一场的旧决议未被物理删除！"
     print("✅ 验证通过：上一场旧决议已被彻底物理删除！")
 
