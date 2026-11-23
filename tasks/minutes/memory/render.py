@@ -5,10 +5,27 @@ tasks/minutes/memory/render.py
 from __future__ import annotations
 
 import logging
+import os
 import re
 import numpy as np
 
 logger = logging.getLogger("MemoryRender")
+
+DEFAULT_MEMORY_MATCH_THRESHOLD = 0.6
+
+
+def get_memory_match_threshold() -> float:
+    """获取记忆关联门禁阈值，优先从环境变量 MEMORY_MATCH_THRESHOLD 读取，默认 0.6"""
+    raw = os.getenv("MEMORY_MATCH_THRESHOLD", "").strip()
+    if not raw:
+        return DEFAULT_MEMORY_MATCH_THRESHOLD
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        logger.warning(
+            f"[MemoryRender] 环境变量 MEMORY_MATCH_THRESHOLD='{raw}' 格式非法，使用默认值 {DEFAULT_MEMORY_MATCH_THRESHOLD}"
+        )
+        return DEFAULT_MEMORY_MATCH_THRESHOLD
 
 
 def cosine_similarity_matrix(candidate_vecs: list[list[float]], memory_vecs: list[list[float]]) -> np.ndarray:
@@ -156,14 +173,15 @@ def enrich_markdown_with_history(
                 # NumPy 矩阵瞬间算分
                 sim_matrix = cosine_similarity_matrix(candidate_vectors, mem_vectors)
 
+                match_threshold = get_memory_match_threshold()
                 valid_hits = []
                 for mem_i, item in enumerate(active_open_items[:30]):
                     col_scores = sim_matrix[:, mem_i]
                     best_cand_idx = int(np.argmax(col_scores))
                     best_score = float(col_scores[best_cand_idx])
 
-                    # 语义门禁阈值：相似度 >= 0.68 判定该分句与该历史事项高度对齐
-                    if best_score >= 0.68:
+                    # 语义门禁阈值：相似度 >= match_threshold 判定该分句与该历史事项高度对齐
+                    if best_score >= match_threshold:
                         line_idx, sent_idx, target_sentence = candidate_records[best_cand_idx]
                         valid_hits.append({
                             "line_idx": line_idx,
